@@ -1,0 +1,262 @@
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+
+app = FastAPI(title="MGIRI Virtual Assistant")
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MGIRI Virtual Assistant</title>
+<style>
+    * { box-sizing: border-box; }
+    body {
+        margin: 0; font-family: Arial, sans-serif; background: #eef4ef;
+        color: #26352b; min-height: 100vh; padding: 24px 12px;
+    }
+    .app {
+        max-width: 820px; height: min(850px, calc(100vh - 48px)); min-height: 520px;
+        margin: 0 auto; background: #fff; border-radius: 18px;
+        box-shadow: 0 5px 24px rgba(0,0,0,.09); display: flex; flex-direction: column;
+        overflow: hidden;
+    }
+    .header { background: #176b43; color: white; padding: 20px 24px; }
+    .header h1 { margin: 0 0 6px; font-size: 23px; }
+    .header p { margin: 0; font-size: 14px; opacity: .92; }
+    #chat {
+        flex: 1; overflow-y: auto; padding: 22px; background: #fbfdfb;
+        display: flex; flex-direction: column; gap: 14px;
+    }
+    .message { max-width: 85%; padding: 12px 15px; border-radius: 14px; line-height: 1.6;
+        white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; }
+    .bot { align-self: flex-start; background: #edf4ee; border-bottom-left-radius: 4px; }
+    .user { align-self: flex-end; background: #176b43; color: white; border-bottom-right-radius: 4px; }
+    .sender { display: block; font-size: 11px; font-weight: bold; margin-bottom: 4px; opacity: .72; }
+    .composer { display: flex; gap: 10px; padding: 16px; border-top: 1px solid #e0e8e1; background: white; }
+    #question { flex: 1; min-width: 0; border: 1px solid #bdcbbf; border-radius: 10px;
+        padding: 13px 14px; font-size: 15px; outline: none; }
+    #question:focus { border-color: #176b43; box-shadow: 0 0 0 2px rgba(23,107,67,.12); }
+    #send { border: 0; border-radius: 10px; padding: 0 22px; color: white;
+        background: #176b43; font-size: 15px; cursor: pointer; }
+    #send:disabled { opacity: .6; cursor: wait; }
+    .footer { text-align: center; color: #69776d; font-size: 12px; padding: 0 12px 12px; }
+    .footer a { color: #176b43; }
+    @media (max-width: 520px) {
+        body { padding: 0; }
+        .app { height: 100vh; min-height: 0; border-radius: 0; }
+        .header { padding: 17px; }
+        #chat { padding: 16px; }
+        .message { max-width: 94%; }
+        .composer { padding: 11px; }
+        #send { padding: 0 16px; }
+    }
+</style>
+</head>
+<body>
+<div class="app">
+    <div class="header">
+        <h1>🌿 MGIRI Virtual Assistant</h1>
+        <p>Ask me about MGIRI, training, technologies and official notices.</p>
+    </div>
+    <div id="chat" aria-live="polite">
+        <div class="message bot">
+            <span class="sender">MGIRI ASSISTANT</span>
+            Hi! I'm the MGIRI Virtual Assistant. How can I help you?
+            <br><br>Namaste! Main MGIRI Virtual Assistant hoon. Aap kya jaanna chahte hain?
+        </div>
+    </div>
+    <form class="composer" id="chatForm">
+        <input id="question" type="text" placeholder="Type your question here..." autocomplete="off" required>
+        <button id="send" type="submit">Send</button>
+    </form>
+    <div class="footer">Official website: <a href="https://mgiri.org/" target="_blank" rel="noopener noreferrer">mgiri.org</a></div>
+</div>
+<script>
+const chat = document.getElementById("chat");
+const input = document.getElementById("question");
+const sendButton = document.getElementById("send");
+
+function addMessage(text, who) {
+    const bubble = document.createElement("div");
+    bubble.className = "message " + who;
+    const sender = document.createElement("span");
+    sender.className = "sender";
+    sender.textContent = who === "user" ? "YOU" : "MGIRI ASSISTANT";
+    const content = document.createElement("div");
+    content.textContent = text;
+    bubble.appendChild(sender);
+    bubble.appendChild(content);
+    chat.appendChild(bubble);
+    chat.scrollTop = chat.scrollHeight;
+    return bubble;
+}
+
+document.getElementById("chatForm").addEventListener("submit", async function(event) {
+    event.preventDefault();
+    const message = input.value.trim();
+    if (!message) return;
+    addMessage(message, "user");
+    input.value = "";
+    input.focus();
+    sendButton.disabled = true;
+    const waiting = addMessage("Please wait... / Kripya intezaar karein...", "bot");
+    try {
+        const response = await fetch("/chat", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({message: message})
+        });
+        if (!response.ok) throw new Error("Server error");
+        const data = await response.json();
+        waiting.querySelector("div").textContent = data.answer;
+    } catch (error) {
+        waiting.querySelector("div").textContent =
+            "Connection error. Please check whether the server is running, then try again.";
+    } finally {
+        sendButton.disabled = false;
+        chat.scrollTop = chat.scrollHeight;
+    }
+});
+</script>
+</body>
+</html>
+"""
+
+
+@app.post("/chat")
+def chat(data: ChatRequest):
+    import re
+
+    # Normalize the question so punctuation/capitalization does not matter.
+    question = data.message.lower().strip()
+    question = re.sub(r"[^\w\s-]", " ", question)
+    question = re.sub(r"\s+", " ", question).strip()
+    words = set(question.split())
+
+    # Detect Hindi written in Devanagari, or common Hinglish words.
+    hindi = any("\u0900" <= char <= "\u097f" for char in data.message)
+    hinglish_words = {
+        "kya", "kaise", "hai", "hain", "batao", "bataiye", "mujhe",
+        "mein", "kahan", "kab", "chahiye", "kitne", "kitni", "kitna",
+        "kaun", "kaunsi", "kaunsa", "kripya", " batao"
+    }
+    if hindi:
+        language = "hi"
+    elif words.intersection(hinglish_words):
+        language = "hinglish"
+    else:
+        language = "en"
+
+    def reply(en, hi=None, hinglish_text=None):
+        if language == "hi":
+            return hi or en
+        if language == "hinglish":
+            return hinglish_text or en
+        return en
+
+    # Handle different ways of asking about the number/list of divisions.
+    division_topic = any(term in question for term in [
+        "division", "divisions", "department", "departments",
+        "विभाग", "डिवीजन", "विभागों"
+    ])
+    division_count_or_list = any(term in question for term in [
+        "how many", "number of", "total", "six", "6", "list",
+        "what are", "name the", "all", "kitne", "kitni", "kitna",
+        "kitne saare", "kitne major", "sabhi", "कितने", "कितनी",
+        "कितना", "कौन-कौन", "कौन से", "कौनसे", "सभी", "सूची"
+    ])
+
+    if division_topic and (
+        division_count_or_list
+        or "major division" in question
+        or "major divisions" in question
+        or "six divisions" in question
+        or "what are the divisions" in question
+        or "tell me about" in question
+        or "describe" in question
+        or "explain" in question
+        or "division here" in question
+        or "divisions here" in question
+    ):
+        answer = reply(
+            "MGIRI has six major divisions:\n1. Khadi & Textile Industries\n2. Bio-Processing & Herbal\n3. Rural Chemical Industries\n4. Rural Crafts & Engineering\n5. Rural Infrastructure & Energy\n6. Management & Systems\n\nOfficial website: https://mgiri.org/",
+            "MGIRI के छह प्रमुख विभाग हैं:\n1. खादी एवं वस्त्र उद्योग\n2. जैव-प्रसंस्करण एवं हर्बल\n3. ग्रामीण रासायनिक उद्योग\n4. ग्रामीण शिल्प एवं अभियांत्रिकी\n5. ग्रामीण अवसंरचना एवं ऊर्जा\n6. प्रबंधन एवं प्रणाली\n\nआधिकारिक वेबसाइट: https://mgiri.org/",
+            "MGIRI ki 6 major divisions hain:\n1. Khadi & Textile Industries\n2. Bio-Processing & Herbal\n3. Rural Chemical Industries\n4. Rural Crafts & Engineering\n5. Rural Infrastructure & Energy\n6. Management & Systems\n\nDetails: https://mgiri.org/"
+        )
+    elif any(term in question for term in ["bio-processing", "bioprocessing", "bio processing", "herbal", "हर्बल", "जैव-प्रसंस्करण"]):
+        answer = reply(
+            "MGIRI's Bio-Processing & Herbal Division works on bio-processing and herbal-related activities. For official details, visit https://mgiri.org/",
+            "MGIRI का जैव-प्रसंस्करण एवं हर्बल विभाग जैव-प्रसंस्करण और हर्बल से जुड़ी गतिविधियों पर काम करता है। आधिकारिक जानकारी के लिए https://mgiri.org/ देखें।",
+            "MGIRI ki Bio-Processing & Herbal Division bio-processing aur herbal-related activities par kaam karti hai. Official details: https://mgiri.org/"
+        )
+    elif any(term in question for term in ["training", "programme", "program", "course", "प्रशिक्षण", "ट्रेनिंग"]):
+        answer = reply(
+            "MGIRI's published training programmes and schedules can be checked here: https://mgiri.org/training/training-calender/\nPlease confirm dates, eligibility and fees from the official notice.",
+            "MGIRI के प्रकाशित प्रशिक्षण कार्यक्रम और शेड्यूल यहाँ देखें: https://mgiri.org/training/training-calender/\nतारीख, पात्रता और शुल्क की पुष्टि आधिकारिक सूचना से करें।",
+            "MGIRI ke published training programmes aur schedules yahan check karein: https://mgiri.org/training/training-calender/\nDates, eligibility aur fees official notice se confirm karein."
+        )
+    elif any(term in question for term in ["tender", "advertisement", "quotation", "निविदा", "विज्ञापन"]):
+        answer = reply(
+            "MGIRI's official tenders and advertisements: https://mgiri.org/advertisement/\nCheck the notice for its publication date and deadline.",
+            "MGIRI की आधिकारिक निविदाएँ और विज्ञापन: https://mgiri.org/advertisement/\nसूचना की तारीख और अंतिम तिथि वहाँ जाँचें।",
+            "MGIRI ke official tenders aur advertisements yahan hain: https://mgiri.org/advertisement/\nNotice ki date aur last date check karein."
+        )
+    elif any(term in question for term in ["vacancy", "vacancies", "recruitment", "job", "career", "नौकरी", "रिक्ति", "भर्ती"]):
+        answer = reply(
+            "MGIRI vacancy and recruitment notices: https://mgiri.org/category/regular-vacancy/\nCheck eligibility and the application deadline in the official notice.",
+            "MGIRI की रिक्तियों और भर्ती संबंधी सूचनाएँ: https://mgiri.org/category/regular-vacancy/\nपात्रता और आवेदन की अंतिम तिथि आधिकारिक सूचना में देखें।",
+            "MGIRI ki vacancy aur recruitment notices yahan dekhein: https://mgiri.org/category/regular-vacancy/\nEligibility aur application ki last date official notice mein check karein."
+        )
+    elif any(term in question for term in ["publication", "annual report", "reports", "report", "प्रकाशन", "वार्षिक रिपोर्ट", "रिपोर्ट"]):
+        answer = reply(
+            "MGIRI publications and annual reports: https://mgiri.org/publications/",
+            "MGIRI के प्रकाशन और वार्षिक रिपोर्ट यहाँ उपलब्ध हैं: https://mgiri.org/publications/",
+            "MGIRI ki publications aur annual reports yahan milengi: https://mgiri.org/publications/"
+        )
+    elif any(term in question for term in ["contact", "address", "phone", "telephone", "email", "संपर्क", "पता", "फोन", "ईमेल"]):
+        answer = reply(
+            "MGIRI Contact Details:\nAddress: Maganwadi, Wardha, Maharashtra - 442001, India\nPhone: 07152-253512\nEmail: director.mgiri@gov.in\nContact page: https://mgiri.org/contact/",
+            "MGIRI संपर्क विवरण:\nपता: मगनवाड़ी, वर्धा, महाराष्ट्र - 442001, भारत\nफोन: 07152-253512\nईमेल: director.mgiri@gov.in\nसंपर्क पेज: https://mgiri.org/contact/",
+            "MGIRI contact details:\nAddress: Maganwadi, Wardha, Maharashtra - 442001, India\nPhone: 07152-253512\nEmail: director.mgiri@gov.in\nContact page: https://mgiri.org/contact/"
+        )
+    elif any(term in question for term in ["technology", "technologies", "techniques", "तकनीक", "तकनीकी"]):
+        answer = reply(
+            "One technology mentioned in this demo is the Biochar Pyrolyzer. It heats biomass (such as plant residues) with very little oxygen to help produce biochar. Details of MGIRI technologies: https://mgiri.org/",
+            "इस डेमो में बताई गई एक तकनीक Biochar Pyrolyzer है। यह पौधों के अवशेष जैसे बायोमास को बहुत कम ऑक्सीजन में गर्म करके बायोचार बनाने में मदद करती है। MGIRI की तकनीकों की जानकारी: https://mgiri.org/",
+            "Is demo mein ek technology Biochar Pyrolyzer hai. Yeh biomass (jaise paudhon ke avshesh) ko bahut kam oxygen mein heat karke biochar banane mein madad karti hai. MGIRI technologies: https://mgiri.org/"
+        )
+    elif any(term in question for term in ["what is mgiri", "about mgiri", "full form", "mgiri kya", "mgiri ka", "mgiri", "महात्मा गांधी ग्राम", "about the institute", "institute"]):
+        answer = reply(
+            "MGIRI stands for Mahatma Gandhi Institute for Rural Industrialization. It is associated with the Ministry of Micro, Small and Medium Enterprises, Government of India. Official website: https://mgiri.org/",
+            "MGIRI का पूरा नाम महात्मा गांधी ग्रामीण औद्योगिकीकरण संस्थान है। यह भारत सरकार के सूक्ष्म, लघु और मध्यम उद्यम मंत्रालय से संबंधित संस्थान है। आधिकारिक वेबसाइट: https://mgiri.org/",
+            "MGIRI ka full form Mahatma Gandhi Institute for Rural Industrialization hai. Yeh Government of India ke Ministry of Micro, Small and Medium Enterprises se sambandhit sansthan hai. Website: https://mgiri.org/"
+        )
+    elif any(term in question for term in ["hello", "hi", "namaste", "नमस्ते", "हेलो"]):
+        answer = reply(
+            "Hello! How can I help you with MGIRI?",
+            "नमस्ते! मैं MGIRI के बारे में आपकी क्या मदद कर सकता हूँ?",
+            "Namaste! MGIRI ke baare mein main aapki kya help kar sakta hoon?"
+        )
+    else:
+        answer = reply(
+            "Sorry, this demo does not have a specific answer to that question yet. Please check the official MGIRI website: https://mgiri.org/",
+            "क्षमा करें, इस डेमो में अभी इस प्रश्न का विशेष उत्तर उपलब्ध नहीं है। कृपया MGIRI की आधिकारिक वेबसाइट देखें: https://mgiri.org/",
+            "Maaf kijiye, is demo mein abhi is question ka specific answer available nahi hai. MGIRI ki official website dekhein: https://mgiri.org/"
+        )
+
+    return {"answer": answer}
+
+
+@app.get("/health")
+def health():
+    return {"status": "working"}
